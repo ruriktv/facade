@@ -1079,6 +1079,9 @@ export function DashboardWidgetCard({
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
                           LCP p75 trend
                         </div>
+                        <div className="mt-1 text-[11px] leading-5 text-muted">
+                          Largest Contentful Paint, the main loading-speed signal.
+                        </div>
                         <div className="mt-2">
                           <TinyTrend values={summary.crux?.lcp ?? []} color="var(--accent)" />
                         </div>
@@ -1086,6 +1089,9 @@ export function DashboardWidgetCard({
                       <div className="rounded-[16px] border border-border bg-panel px-3 py-3">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
                           INP p75 trend
+                        </div>
+                        <div className="mt-1 text-[11px] leading-5 text-muted">
+                          Interaction to Next Paint, the responsiveness signal.
                         </div>
                         <div className="mt-2">
                           <TinyTrend values={summary.crux?.inp ?? []} color="#1e6f67" />
@@ -1095,10 +1101,19 @@ export function DashboardWidgetCard({
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
                           CLS p75 trend
                         </div>
+                        <div className="mt-1 text-[11px] leading-5 text-muted">
+                          Cumulative Layout Shift, the visual-stability signal.
+                        </div>
                         <div className="mt-2">
                           <TinyTrend values={summary.crux?.cls ?? []} color="#6e4bb8" />
                         </div>
                       </div>
+                    </div>
+                    <div className="mt-3 rounded-[16px] border border-border bg-panel px-3 py-3 text-sm leading-6 text-muted">
+                      Property-level counts of `Good`, `Needs improvement`, and `Poor` URLs for
+                      `Mobile` and `Desktop` are available in the Search Console UI, but Google
+                      does not expose those same URL counts through the public Search Console or
+                      CrUX APIs. Use the `CWV` button for the authoritative report in Google.
                     </div>
                     {!summary.hasCruxApiKey ? (
                       <div className="mt-3 text-sm leading-6 text-muted">
