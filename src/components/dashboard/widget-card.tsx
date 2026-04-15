@@ -959,15 +959,17 @@ export function DashboardWidgetCard({
 
         {widget.kind === "weather" ? (
           <div className="flex h-full flex-col justify-between gap-4">
-            <div className="grid grid-cols-[1fr_auto] items-end gap-3">
+            <div className="grid gap-3">
               <div>
                 <div className="text-sm uppercase tracking-[0.18em] text-muted">Sydney</div>
-                <div className="mt-2 text-5xl font-semibold tracking-[-0.06em]">23°</div>
-                <div className="mt-2 text-sm leading-6 text-muted">
-                  Mild with light coastal winds. Great candidate for `Open-Meteo` in v1.
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="text-5xl font-semibold tracking-[-0.06em]">23°</div>
+                  <CloudSun size={46} className="shrink-0 text-accent" />
+                  <div className="text-sm leading-6 text-muted">
+                    Mild with light coastal winds. Great candidate for `Open-Meteo` in v1.
+                  </div>
                 </div>
               </div>
-              <CloudSun size={46} className="text-accent" />
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <InfoPill label="Feels like" value="24°" />
