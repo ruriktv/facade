@@ -655,11 +655,20 @@ export function DashboardWidgetCard({
     }
 
     let cancelled = false;
+    const googleStatus =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("google")
+        : null;
+    const shouldForceGoogleRefresh = googleStatus === "connected";
 
-    const cached = getCachedPayload<GoogleSearchConsoleResponse>(SEARCH_CONSOLE_CACHE_KEY);
+    const cached = shouldForceGoogleRefresh
+      ? null
+      : getCachedPayload<GoogleSearchConsoleResponse>(SEARCH_CONSOLE_CACHE_KEY);
     if (cached?.data) {
       setSearchConsoleData(cached.data);
       setSearchConsoleUpdatedAt(cached.updatedAt ?? null);
+    } else if (shouldForceGoogleRefresh) {
+      window.localStorage.removeItem(SEARCH_CONSOLE_CACHE_KEY);
     }
 
     async function loadSearchConsole(forceRefresh = false) {
@@ -693,8 +702,8 @@ export function DashboardWidgetCard({
       typeof cached?.updatedAt === "number" &&
       Date.now() - cached.updatedAt < GOOGLE_WIDGET_CACHE_TTL_MS;
 
-    if (!cached?.data || !shouldUseCache) {
-      void loadSearchConsole();
+    if (!cached?.data || !shouldUseCache || shouldForceGoogleRefresh) {
+      void loadSearchConsole(shouldForceGoogleRefresh);
     }
 
     return () => {
@@ -708,11 +717,18 @@ export function DashboardWidgetCard({
     }
 
     let cancelled = false;
+    const googleStatus =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("google")
+        : null;
+    const shouldForceGoogleRefresh = googleStatus === "connected";
 
-    const cached = getCachedPayload<GoogleGa4Response>(GA4_CACHE_KEY);
+    const cached = shouldForceGoogleRefresh ? null : getCachedPayload<GoogleGa4Response>(GA4_CACHE_KEY);
     if (cached?.data) {
       setGa4Data(cached.data);
       setGa4UpdatedAt(cached.updatedAt ?? null);
+    } else if (shouldForceGoogleRefresh) {
+      window.localStorage.removeItem(GA4_CACHE_KEY);
     }
 
     async function loadGa4(forceRefresh = false) {
@@ -745,8 +761,8 @@ export function DashboardWidgetCard({
       typeof cached?.updatedAt === "number" &&
       Date.now() - cached.updatedAt < GOOGLE_WIDGET_CACHE_TTL_MS;
 
-    if (!cached?.data || !shouldUseCache) {
-      void loadGa4();
+    if (!cached?.data || !shouldUseCache || shouldForceGoogleRefresh) {
+      void loadGa4(shouldForceGoogleRefresh);
     }
 
     return () => {
