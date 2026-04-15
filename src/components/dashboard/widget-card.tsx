@@ -164,8 +164,49 @@ const optimizelyCampaigns = {
 };
 
 const OPTIMIZELY_CACHE_KEY = "facade-optimizely-cache-v3";
-const OPTIMIZELY_CACHE_TTL_MS = 5 * 60 * 1000;
+const OPTIMIZELY_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 const OPTIMIZELY_RESULT_CACHE_KEY_PREFIX = "facade-optimizely-result-v1";
+const SEARCH_CONSOLE_CACHE_KEY = "facade-search-console-cache-v1";
+const GA4_CACHE_KEY = "facade-ga4-cache-v1";
+const GOOGLE_WIDGET_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+
+type GoogleSearchConsoleResponse = {
+  ready: boolean;
+  message: string;
+  authUrl?: string;
+  summaries?: Array<{
+    property: string;
+    origin?: string;
+    coreWebVitalsUrl?: string;
+    httpsUrl?: string;
+    clicks?: number;
+    impressions?: number;
+    ctr?: number;
+    avgPosition?: number;
+    hasCruxApiKey?: boolean;
+    crux?: {
+      labels: string[];
+      lcp: Array<number | string | null>;
+      inp: Array<number | string | null>;
+      cls: Array<number | string | null>;
+    } | null;
+    error?: string;
+  }>;
+};
+
+type GoogleGa4Response = {
+  ready: boolean;
+  message: string;
+  authUrl?: string;
+  summaries?: Array<{
+    label: string;
+    id: string;
+    sessions?: number;
+    engagedSessions?: number;
+    conversions?: number;
+    error?: string;
+  }>;
+};
 
 type LiveOptimizelyResponse = {
   ready: boolean;
@@ -288,6 +329,41 @@ function WidgetLoadingOverlay({ label }: { label: string }) {
   );
 }
 
+function getCachedPayload<T>(cacheKey: string) {
+  try {
+    const cached = window.localStorage.getItem(cacheKey);
+    if (!cached) {
+      return null;
+    }
+
+    return JSON.parse(cached) as {
+      updatedAt?: number;
+      data?: T;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatCacheWindow(updatedAt: number | null, ttlMs: number) {
+  if (!updatedAt) {
+    return "No cache yet";
+  }
+
+  const formatOptions: Intl.DateTimeFormatOptions = {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+  };
+
+  const refreshedAt = new Date(updatedAt).toLocaleString("en-AU", formatOptions);
+  const refreshBy = new Date(updatedAt + ttlMs).toLocaleString("en-AU", formatOptions);
+
+  return `Cached ${refreshedAt}. Refreshes by ${refreshBy}`;
+}
+
 function LineTrend() {
   const points = [70, 66, 74, 82, 78, 88, 92];
   const path = points
@@ -354,6 +430,39 @@ function CwvPropertyCard({
         <InfoPill label="LCP / INP / CLS" value={`${lcp} / ${inp} / ${cls}`} />
       </div>
     </div>
+  );
+}
+
+function TinyTrend({
+  values,
+  color,
+}: {
+  values: Array<number | string | null>;
+  color: string;
+}) {
+  const points = values
+    .map((value) => (typeof value === "string" ? Number(value) : value))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+
+  if (!points.length) {
+    return <div className="h-16 rounded-[16px] border border-border bg-panel" />;
+  }
+
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const spread = max - min || 1;
+  const path = points
+    .map((point, index) => {
+      const x = points.length === 1 ? 0 : (index / (points.length - 1)) * 100;
+      const y = 100 - ((point - min) / spread) * 100;
+      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+    })
+    .join(" ");
+
+  return (
+    <svg viewBox="0 0 100 100" className="h-16 w-full overflow-visible">
+      <path d={path} fill="none" stroke={color} strokeWidth="4" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -517,6 +626,12 @@ export function DashboardWidgetCard({
   const [liveOptimizely, setLiveOptimizely] = useState<LiveOptimizelyResponse | null>(null);
   const [isOptimizelyLoading, setIsOptimizelyLoading] = useState(false);
   const [optimizelyUpdatedAt, setOptimizelyUpdatedAt] = useState<number | null>(null);
+  const [searchConsoleData, setSearchConsoleData] = useState<GoogleSearchConsoleResponse | null>(null);
+  const [ga4Data, setGa4Data] = useState<GoogleGa4Response | null>(null);
+  const [isSearchConsoleLoading, setIsSearchConsoleLoading] = useState(false);
+  const [isGa4Loading, setIsGa4Loading] = useState(false);
+  const [searchConsoleUpdatedAt, setSearchConsoleUpdatedAt] = useState<number | null>(null);
+  const [ga4UpdatedAt, setGa4UpdatedAt] = useState<number | null>(null);
   const isCompact = breakpoint === "sm";
 
   useEffect(() => {
@@ -535,32 +650,120 @@ export function DashboardWidgetCard({
   }, [widget.kind]);
 
   useEffect(() => {
-    if (widget.kind !== "optimizely") {
+    if (widget.kind !== "searchConsole") {
       return;
     }
 
     let cancelled = false;
 
-    try {
-      const cached = window.localStorage.getItem(OPTIMIZELY_CACHE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached) as {
-          updatedAt?: number;
-          data?: LiveOptimizelyResponse;
-        };
+    const cached = getCachedPayload<GoogleSearchConsoleResponse>(SEARCH_CONSOLE_CACHE_KEY);
+    if (cached?.data) {
+      setSearchConsoleData(cached.data);
+      setSearchConsoleUpdatedAt(cached.updatedAt ?? null);
+    }
 
-        if (!cancelled && parsed.data) {
-          setLiveOptimizely(parsed.data);
-          setOptimizelyUpdatedAt(parsed.updatedAt ?? null);
+    async function loadSearchConsole(forceRefresh = false) {
+      setIsSearchConsoleLoading(true);
+      try {
+        const response = await fetch(
+          `/api/google/search-console${forceRefresh ? "?refresh=1" : ""}`,
+          { cache: "no-store" },
+        );
+        const data = (await response.json()) as GoogleSearchConsoleResponse;
+        if (!cancelled) {
+          const updatedAt = Date.now();
+          setSearchConsoleData(data);
+          setSearchConsoleUpdatedAt(updatedAt);
+          window.localStorage.setItem(
+            SEARCH_CONSOLE_CACHE_KEY,
+            JSON.stringify({
+              updatedAt,
+              data,
+            }),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsSearchConsoleLoading(false);
         }
       }
-    } catch {
-      // Ignore invalid cached data and fetch fresh.
+    }
+
+    const shouldUseCache =
+      typeof cached?.updatedAt === "number" &&
+      Date.now() - cached.updatedAt < GOOGLE_WIDGET_CACHE_TTL_MS;
+
+    if (!cached?.data || !shouldUseCache) {
+      void loadSearchConsole();
     }
 
     return () => {
       cancelled = true;
     };
+  }, [widget.kind]);
+
+  useEffect(() => {
+    if (widget.kind !== "ga4") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const cached = getCachedPayload<GoogleGa4Response>(GA4_CACHE_KEY);
+    if (cached?.data) {
+      setGa4Data(cached.data);
+      setGa4UpdatedAt(cached.updatedAt ?? null);
+    }
+
+    async function loadGa4(forceRefresh = false) {
+      setIsGa4Loading(true);
+      try {
+        const response = await fetch(`/api/google/ga4${forceRefresh ? "?refresh=1" : ""}`, {
+          cache: "no-store",
+        });
+        const data = (await response.json()) as GoogleGa4Response;
+        if (!cancelled) {
+          const updatedAt = Date.now();
+          setGa4Data(data);
+          setGa4UpdatedAt(updatedAt);
+          window.localStorage.setItem(
+            GA4_CACHE_KEY,
+            JSON.stringify({
+              updatedAt,
+              data,
+            }),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsGa4Loading(false);
+        }
+      }
+    }
+
+    const shouldUseCache =
+      typeof cached?.updatedAt === "number" &&
+      Date.now() - cached.updatedAt < GOOGLE_WIDGET_CACHE_TTL_MS;
+
+    if (!cached?.data || !shouldUseCache) {
+      void loadGa4();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [widget.kind]);
+
+  useEffect(() => {
+    if (widget.kind !== "optimizely") {
+      return;
+    }
+
+    const cached = getCachedPayload<LiveOptimizelyResponse>(OPTIMIZELY_CACHE_KEY);
+    if (cached?.data) {
+      setLiveOptimizely(cached.data);
+      setOptimizelyUpdatedAt(cached.updatedAt ?? null);
+    }
   }, [widget.kind]);
 
   useEffect(() => {
@@ -578,22 +781,19 @@ export function DashboardWidgetCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [widget.kind]);
 
-  const refreshOptimizelyData = async () => {
+  const refreshOptimizelyData = async (forceRefresh = false) => {
     setIsOptimizelyLoading(true);
 
     try {
-      const response = await fetch("/api/optimizely/experiments", { cache: "no-store" });
+      const response = await fetch(
+        `/api/optimizely/experiments${forceRefresh ? "?refresh=1" : ""}`,
+        { cache: "no-store" },
+      );
       const data = (await response.json()) as LiveOptimizelyResponse;
       const updatedAt = Date.now();
       setLiveOptimizely(data);
       setOptimizelyUpdatedAt(updatedAt);
-      window.localStorage.setItem(
-        OPTIMIZELY_CACHE_KEY,
-        JSON.stringify({
-          updatedAt,
-          data,
-        }),
-      );
+      window.localStorage.setItem(OPTIMIZELY_CACHE_KEY, JSON.stringify({ updatedAt, data }));
     } catch {
       // Keep last known good cache if refresh fails.
     } finally {
@@ -779,34 +979,254 @@ export function DashboardWidgetCard({
 
         {widget.kind === "searchConsole" ? (
           <div className="dashboard-scrollbar flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <InfoPill label="Tracked properties" value="3" />
-              <InfoPill label="Worst trend" value="INP drift" />
-              <InfoPill label="Priority" value="Commerce home + PLP" />
+            {isSearchConsoleLoading ? <LoadingSpinner label="Loading Search Console..." /> : null}
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs uppercase tracking-[0.16em] text-muted">
+                {formatCacheWindow(searchConsoleUpdatedAt, GOOGLE_WIDGET_CACHE_TTL_MS)}
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsSearchConsoleLoading(true);
+                  try {
+                    const response = await fetch("/api/google/search-console?refresh=1", {
+                      cache: "no-store",
+                    });
+                    const data = (await response.json()) as GoogleSearchConsoleResponse;
+                    const updatedAt = Date.now();
+                    setSearchConsoleData(data);
+                    setSearchConsoleUpdatedAt(updatedAt);
+                    window.localStorage.setItem(
+                      SEARCH_CONSOLE_CACHE_KEY,
+                      JSON.stringify({ updatedAt, data }),
+                    );
+                  } finally {
+                    setIsSearchConsoleLoading(false);
+                  }
+                }}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background-elevated text-muted transition hover:border-accent/40"
+                aria-label="Refresh Search Console data"
+                title="Refresh Search Console data"
+              >
+                <RefreshCw size={14} className={clsx(isSearchConsoleLoading && "animate-spin")} />
+              </button>
             </div>
-            {cwvProperties.map((property) => (
-              <CwvPropertyCard key={property.domain} {...property} />
-            ))}
+            {searchConsoleData?.authUrl ? (
+              <div className="rounded-[20px] border border-border bg-background-elevated px-4 py-4">
+                <div className="text-sm font-semibold">Connect Google to Search Console</div>
+                <div className="mt-2 text-sm leading-6 text-muted">{searchConsoleData.message}</div>
+                <a
+                  href={searchConsoleData.authUrl}
+                  className="mt-3 inline-flex rounded-full border border-border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted transition hover:border-accent/40"
+                >
+                  Connect Google
+                </a>
+              </div>
+            ) : searchConsoleData?.ready && searchConsoleData.summaries?.length ? (
+              <>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <InfoPill label="Tracked properties" value={`${searchConsoleData.summaries.length}`} />
+                  <InfoPill
+                    label="Total clicks"
+                    value={`${searchConsoleData.summaries.reduce((sum, item) => sum + (item.clicks ?? 0), 0)}`}
+                  />
+                  <InfoPill
+                    label="Total impressions"
+                    value={`${searchConsoleData.summaries.reduce((sum, item) => sum + (item.impressions ?? 0), 0)}`}
+                  />
+                </div>
+                {searchConsoleData.summaries.map((summary) => (
+                  <div
+                    key={summary.property}
+                    className="rounded-[20px] border border-border bg-background-elevated px-4 py-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold">{summary.property}</div>
+                        <div className="mt-1 text-xs text-muted">{summary.origin}</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {summary.coreWebVitalsUrl ? (
+                          <a
+                            href={summary.coreWebVitalsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex rounded-full border border-border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted transition hover:border-accent/40"
+                          >
+                            CWV
+                          </a>
+                        ) : null}
+                        {summary.httpsUrl ? (
+                          <a
+                            href={summary.httpsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex rounded-full border border-border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted transition hover:border-accent/40"
+                          >
+                            HTTPS
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                      <InfoPill label="Clicks" value={`${summary.clicks ?? 0}`} />
+                      <InfoPill label="Impressions" value={`${summary.impressions ?? 0}`} />
+                      <InfoPill label="CTR" value={`${((summary.ctr ?? 0) * 100).toFixed(2)}%`} />
+                      <InfoPill label="Avg position" value={`${(summary.avgPosition ?? 0).toFixed(1)}`} />
+                    </div>
+                    <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                      <div className="rounded-[16px] border border-border bg-panel px-3 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+                          LCP p75 trend
+                        </div>
+                        <div className="mt-2">
+                          <TinyTrend values={summary.crux?.lcp ?? []} color="var(--accent)" />
+                        </div>
+                      </div>
+                      <div className="rounded-[16px] border border-border bg-panel px-3 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+                          INP p75 trend
+                        </div>
+                        <div className="mt-2">
+                          <TinyTrend values={summary.crux?.inp ?? []} color="#1e6f67" />
+                        </div>
+                      </div>
+                      <div className="rounded-[16px] border border-border bg-panel px-3 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+                          CLS p75 trend
+                        </div>
+                        <div className="mt-2">
+                          <TinyTrend values={summary.crux?.cls ?? []} color="#6e4bb8" />
+                        </div>
+                      </div>
+                    </div>
+                    {!summary.hasCruxApiKey ? (
+                      <div className="mt-3 text-sm leading-6 text-muted">
+                        Add `GOOGLE_API_KEY` with the Chrome UX Report API enabled to populate Core Web Vitals charts.
+                      </div>
+                    ) : null}
+                    {summary.error ? (
+                      <div className="mt-3 text-sm leading-6 text-muted">{summary.error}</div>
+                    ) : null}
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <InfoPill label="Tracked properties" value="3" />
+                  <InfoPill label="Worst trend" value="INP drift" />
+                  <InfoPill label="Priority" value="Commerce home + PLP" />
+                </div>
+                {cwvProperties.map((property) => (
+                  <CwvPropertyCard key={property.domain} {...property} />
+                ))}
+              </>
+            )}
           </div>
         ) : null}
 
         {widget.kind === "ga4" ? (
           <div className="dashboard-scrollbar flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1">
-            <div className="grid gap-2 sm:grid-cols-4">
-              <InfoPill label="Campaign sessions" value="8.9K" />
-              <InfoPill label="Engaged sessions" value="6.1K" />
-              <InfoPill label="Conversions" value="428" />
-              <InfoPill label="CVR" value="4.8%" />
-            </div>
-            <LineTrend />
-            <div className="rounded-[20px] border border-border bg-background-elevated px-4 py-4">
-              <div className="text-sm font-semibold">Planned GA4 shape</div>
-              <div className="mt-2 text-sm leading-6 text-muted">
-                The current card is set up for a proper campaign chart rather than filler bars:
-                sessions trend, engaged sessions, conversions, and experiment-linked segments. Once
-                we connect your property, you can react to the exact shape and density.
+            {isGa4Loading ? <LoadingSpinner label="Loading GA4..." /> : null}
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs uppercase tracking-[0.16em] text-muted">
+                {formatCacheWindow(ga4UpdatedAt, GOOGLE_WIDGET_CACHE_TTL_MS)}
               </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsGa4Loading(true);
+                  try {
+                    const response = await fetch("/api/google/ga4?refresh=1", {
+                      cache: "no-store",
+                    });
+                    const data = (await response.json()) as GoogleGa4Response;
+                    const updatedAt = Date.now();
+                    setGa4Data(data);
+                    setGa4UpdatedAt(updatedAt);
+                    window.localStorage.setItem(
+                      GA4_CACHE_KEY,
+                      JSON.stringify({ updatedAt, data }),
+                    );
+                  } finally {
+                    setIsGa4Loading(false);
+                  }
+                }}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background-elevated text-muted transition hover:border-accent/40"
+                aria-label="Refresh GA4 data"
+                title="Refresh GA4 data"
+              >
+                <RefreshCw size={14} className={clsx(isGa4Loading && "animate-spin")} />
+              </button>
             </div>
+            {ga4Data?.authUrl ? (
+              <div className="rounded-[20px] border border-border bg-background-elevated px-4 py-4">
+                <div className="text-sm font-semibold">Connect Google to GA4</div>
+                <div className="mt-2 text-sm leading-6 text-muted">{ga4Data.message}</div>
+                <a
+                  href={ga4Data.authUrl}
+                  className="mt-3 inline-flex rounded-full border border-border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted transition hover:border-accent/40"
+                >
+                  Connect Google
+                </a>
+              </div>
+            ) : ga4Data?.ready && ga4Data.summaries?.length ? (
+              <>
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <InfoPill
+                    label="Sessions"
+                    value={`${ga4Data.summaries.reduce((sum, item) => sum + (item.sessions ?? 0), 0)}`}
+                  />
+                  <InfoPill
+                    label="Engaged"
+                    value={`${ga4Data.summaries.reduce((sum, item) => sum + (item.engagedSessions ?? 0), 0)}`}
+                  />
+                  <InfoPill
+                    label="Conversions"
+                    value={`${ga4Data.summaries.reduce((sum, item) => sum + (item.conversions ?? 0), 0)}`}
+                  />
+                  <InfoPill label="Properties" value={`${ga4Data.summaries.length}`} />
+                </div>
+                <LineTrend />
+                <div className="space-y-3">
+                  {ga4Data.summaries.map((summary) => (
+                    <div
+                      key={`${summary.label}-${summary.id}`}
+                      className="rounded-[20px] border border-border bg-background-elevated px-4 py-4"
+                    >
+                      <div className="text-sm font-semibold">{summary.label}</div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <InfoPill label="Sessions" value={`${summary.sessions ?? 0}`} />
+                        <InfoPill label="Engaged" value={`${summary.engagedSessions ?? 0}`} />
+                        <InfoPill label="Conversions" value={`${summary.conversions ?? 0}`} />
+                      </div>
+                      {summary.error ? (
+                        <div className="mt-3 text-sm leading-6 text-muted">{summary.error}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <InfoPill label="Campaign sessions" value="8.9K" />
+                  <InfoPill label="Engaged sessions" value="6.1K" />
+                  <InfoPill label="Conversions" value="428" />
+                  <InfoPill label="CVR" value="4.8%" />
+                </div>
+                <LineTrend />
+                <div className="rounded-[20px] border border-border bg-background-elevated px-4 py-4">
+                  <div className="text-sm font-semibold">Planned GA4 shape</div>
+                  <div className="mt-2 text-sm leading-6 text-muted">
+                    The current card is set up for a proper campaign chart rather than filler bars:
+                    sessions trend, engaged sessions, conversions, and experiment-linked segments. Once
+                    we connect your property, you can react to the exact shape and density.
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         ) : null}
 
@@ -948,25 +1368,12 @@ export function DashboardWidgetCard({
               ) : null}
 
               <div className="flex items-center justify-between gap-3">
-                {optimizelyUpdatedAt ? (
-                  <div className="text-xs uppercase tracking-[0.16em] text-muted">
-                    Cached{" "}
-                    {new Date(optimizelyUpdatedAt).toLocaleString("en-AU", {
-                      year: "numeric",
-                      month: "short",
-                      day: "2-digit",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-xs uppercase tracking-[0.16em] text-muted">
-                    No cache yet
-                  </div>
-                )}
+                <div className="text-xs uppercase tracking-[0.16em] text-muted">
+                  {formatCacheWindow(optimizelyUpdatedAt, OPTIMIZELY_CACHE_TTL_MS)}
+                </div>
                 <button
                   type="button"
-                  onClick={() => void refreshOptimizelyData()}
+                  onClick={() => void refreshOptimizelyData(true)}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background-elevated text-muted transition hover:border-accent/40"
                   aria-label="Refresh Optimizely data"
                   title="Refresh Optimizely data"

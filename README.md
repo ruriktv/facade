@@ -57,8 +57,9 @@ Set these in `.env.local` for the first pass:
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3000/api/google/oauth/callback
+GOOGLE_API_KEY=
 GSC_SITE_URLS=sc-domain:example.com,https://www.example.com/
-GA4_PROPERTY_ID=
+GA4_PROPERTY_IDS=Primary:123456789,Secondary:987654321
 
 OPTIMIZELY_API_TOKEN=
 OPTIMIZELY_PROJECT_ID=
@@ -72,13 +73,24 @@ The attached Google file is a `web` OAuth client, which is a valid starting poin
 2. Enable the APIs we need:
    - Search Console API
    - Google Analytics Data API
+   - Chrome UX Report API
 3. Configure the OAuth consent screen.
 4. Add authorized redirect URIs for local and hosted environments.
 5. Add your Google account as a test user while the app is unverified.
 6. Make sure that Google account already has access to:
    - the required Search Console properties
-   - the required GA4 property
+   - the required GA4 properties
 7. Put the OAuth client values into `.env.local`
+
+## Search Console Hybrid Model
+
+The Search Console widget uses a hybrid approach:
+
+- Search Console API for search performance metrics
+- Chrome UX Report API for Core Web Vitals trend charts
+- direct Search Console deep links for the Core Web Vitals and HTTPS report pages
+
+This means Core Web Vitals charts require `GOOGLE_API_KEY` with the Chrome UX Report API enabled.
 
 ## Optimizely Setup Plan
 

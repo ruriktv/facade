@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 type OptimizelyProject = {
   id: number;
@@ -78,7 +78,7 @@ declare global {
 }
 
 const API_ROOT = "https://api.optimizely.com/v2";
-const OPTIMIZELY_ROUTE_CACHE_TTL_MS = 5 * 60 * 1000;
+const OPTIMIZELY_ROUTE_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 
 function getHeaders(token: string) {
   return {
@@ -268,8 +268,9 @@ async function fetchRecentContributorsForProject(
   return contributorMap;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const token = process.env.OPTIMIZELY_API_TOKEN;
+  const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
 
   if (!token) {
     return NextResponse.json(
@@ -287,7 +288,7 @@ export async function GET() {
 
   try {
     const cached = globalThis.__facadeOptimizelyCache__;
-    if (cached && cached.expiresAt > Date.now()) {
+    if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
       return NextResponse.json(cached.data);
     }
 
