@@ -1109,6 +1109,9 @@ export function DashboardWidgetCard({
                         </div>
                       </div>
                     </div>
+                    <div className="mt-3 text-[11px] leading-5 text-muted">
+                      Trend window: last 12 weekly points, each based on a 28-day rolling field-data window from CrUX.
+                    </div>
                     <div className="mt-3 rounded-[16px] border border-border bg-panel px-3 py-3 text-sm leading-6 text-muted">
                       Property-level counts of `Good`, `Needs improvement`, and `Poor` URLs for
                       `Mobile` and `Desktop` are available in the Search Console UI, but Google
